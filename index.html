@@ -1,0 +1,1082 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Home, PlusCircle, Clock, TrendingUp, TrendingDown, Utensils, Coffee, Cake, ShoppingBag, 
+  Truck, Zap, MoreHorizontal, Wallet, Sparkles, Wand2, Loader2, Wrench, Camera, X, BarChart3, 
+  Calendar, Filter, AlertCircle, Trash2, CheckCircle2, ListPlus, Link, RefreshCw, CloudSnow, Edit2, Check, Settings
+} from 'lucide-react';
+
+const INCOME_CATEGORIES = [
+  { id: 'retail', name: 'Bán lẻ', icon: <ShoppingBag size={18} /> },
+  { id: 'order', name: 'Đặt bánh', icon: <Cake size={18} /> },
+  { id: 'drink', name: 'Đồ uống', icon: <Coffee size={18} /> },
+  { id: 'other_in', name: 'Khác', icon: <PlusCircle size={18} /> },
+];
+
+const EXPENSE_CATEGORIES = [
+  { id: 'ingredients', name: 'Nguyên liệu', icon: <Utensils size={18} /> },
+  { id: 'packaging', name: 'Bao bì', icon: <ShoppingBag size={18} /> },
+  { id: 'shipping', name: 'Vận chuyển', icon: <Truck size={18} /> },
+  { id: 'utilities', name: 'Điện/Nước', icon: <Zap size={18} /> },
+  { id: 'machinery', name: 'Thiết bị máy móc', icon: <Wrench size={18} /> },
+  { id: 'other_out', name: 'Khác', icon: <MoreHorizontal size={18} /> },
+];
+
+export default function App() {
+  const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzJpSxCUvoTs6YB1jbni3ectTs60SHBdAX8iHcVpfuXuMMpIU1cpw7CjRa_CwS0E7CJaA/exec";
+
+  const [scriptUrl, setScriptUrl] = useState(() => {
+    return localStorage.getItem('bakery_script_url') || DEFAULT_SCRIPT_URL;
+  });
+
+  const [showSettings, setShowSettings] = useState(false);
+  const [inputUrl, setInputUrl] = useState(scriptUrl);
+
+  const generateSafeId = () => Date.now().toString() + '_' + Math.floor(Math.random() * 10000).toString();
+
+  const [transactions, setTransactions] = useState(() => {
+    try {
+      const saved = localStorage.getItem('bakery_txs');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.map(t => ({ ...t, id: t.id ? t.id.toString().trim() : generateSafeId() }));
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const [activeTab, setActiveTab] = useState('add'); 
+  const [formType, setFormType] = useState('expense'); 
+  const [formAmount, setFormAmount] = useState('');
+  const [formCategory, setFormCategory] = useState('Nguyên liệu');
+  const [formNote, setFormNote] = useState('');
+  const [formItemName, setFormItemName] = useState('');
+  const [formBrand, setFormBrand] = useState('');
+  const [formQuantity, setFormQuantity] = useState('');
+  const [formUnit, setFormUnit] = useState('kg');
+  const [formUnitPrice, setFormUnitPrice] = useState('');
+
+  const [draftTransactions, setDraftTransactions] = useState([]);
+  const [editingDraftId, setEditingDraftId] = useState(null);
+  const [editFormState, setEditFormState] = useState(null);
+
+  const [reportType, setReportType] = useState('all'); 
+  const [reportPeriod, setReportPeriod] = useState('all'); 
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
+  const [bgSyncing, setBgSyncing] = useState(false);
+
+  const [smartText, setSmartText] = useState('');
+  const [isProcessingAI, setIsProcessingAI] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [imagePreview, setImagePreview] = useState(null);
+
+  const [showMissingInfoModal, setShowMissingInfoModal] = useState(false);
+  const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
+  const [pendingTransaction, setPendingTransaction] = useState(null);
+  
+  const [toast, setToast] = useState(null); 
+
+  const isPushingRef = useRef(false);
+  const isPullingRef = useRef(false);
+  const formEndRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.setItem('bakery_txs', JSON.stringify(transactions));
+  }, [transactions]);
+
+  useEffect(() => {
+    if (formType === 'income') {
+      setFormCategory(INCOME_CATEGORIES[0].name);
+    } else {
+      setFormCategory(EXPENSE_CATEGORIES[0].name);
+    }
+  }, [formType]);
+
+  useEffect(() => {
+    if (formCategory === 'Nguyên liệu') {
+      if (!['kg', 'g', 'l', 'ml'].includes(formUnit)) setFormUnit('kg');
+    } else if (formCategory === 'Điện/Nước') {
+      setFormUnit('tháng');
+    }
+  }, [formCategory]);
+
+  const showToastMsg = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 5000); // Tăng thời gian hiển thị thông báo
+  };
+
+  const handleSaveUrl = () => {
+    const cleanUrl = inputUrl.trim();
+    if (!cleanUrl) {
+      setScriptUrl(DEFAULT_SCRIPT_URL);
+      setInputUrl(DEFAULT_SCRIPT_URL);
+      localStorage.removeItem('bakery_script_url');
+      showToastMsg("Đã khôi phục link Apps Script mặc định.", "success");
+    } else if (!cleanUrl.startsWith("https://script.google.com/")) {
+      showToastMsg("Link không đúng định dạng Google Apps Script!", "error");
+      return;
+    } else {
+      setScriptUrl(cleanUrl);
+      localStorage.setItem('bakery_script_url', cleanUrl);
+      showToastMsg("Đã cập nhật cấu hình link mới thành công!", "success");
+    }
+    setShowSettings(false);
+  };
+
+  const formatCurrency = (amount) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+  
+  const parseDateSafe = (dateVal) => {
+    if (!dateVal) return new Date();
+    let d = new Date(dateVal);
+    if (!isNaN(d.getTime())) return d;
+    
+    if (typeof dateVal === 'string') {
+      const parts = dateVal.split(/[\s/:-T]+/);
+      if (parts.length >= 3) {
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        let year = parseInt(parts[2], 10);
+        if (year < 100) year += 2000;
+        d = new Date(year, month, day);
+        if (!isNaN(d.getTime())) return d;
+      }
+    }
+    return new Date();
+  };
+
+  const formatDate = (dateStr) => {
+    const d = parseDateSafe(dateStr);
+    return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+  };
+
+  // ----- CƠ CHẾ ĐẨY DỮ LIỆU ĐÃ ĐƯỢC TÁI CẤU TRÚC HOÀN TOÀN -----
+  const executeSyncToSheet = async (isAuto = false, customTxs = null) => {
+    if (!scriptUrl) return;
+    if (isPushingRef.current) return; 
+
+    const unsyncedTxs = customTxs || transactions.filter(t => !t.synced);
+    if (unsyncedTxs.length === 0) return;
+
+    isPushingRef.current = true;
+    if (isAuto) setBgSyncing(true); else setIsManualSyncing(true);
+
+    try {
+      const cleanData = unsyncedTxs.map(tx => {
+        const checkStr = (val, fallback) => {
+          if (!val || String(val).trim().toLowerCase() === 'null' || String(val).trim().toLowerCase() === 'undefined') return fallback;
+          return String(val).trim();
+        };
+
+        return {
+          id: tx.id ? String(tx.id) : generateSafeId(),
+          date: tx.date || new Date().toISOString(),
+          category: checkStr(tx.category, 'Khác'),
+          itemName: checkStr(tx.itemName, checkStr(tx.category, 'Chưa đặt tên')),
+          unit: checkStr(tx.unit, ''),
+          quantity: parseFloat(tx.quantity) || null,
+          unitPrice: parseFloat(tx.unitPrice) || null,
+          amount: parseFloat(tx.amount) || 0,
+          type: checkStr(tx.type, 'expense')
+        };
+      });
+
+      const url = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}action=push&t=${Date.now()}`;
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(cleanData)
+      });
+      
+      // Đọc phản hồi dưới dạng text để tránh lỗi sập App khi Google trả về HTML (lỗi quyền)
+      const responseText = await response.text();
+      
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error("Phản hồi không phải JSON:", responseText);
+        // Nếu trả về HTML chứa "<!DOCTYPE html>", 100% là lỗi phân quyền của Google
+        if (responseText.includes("<!DOCTYPE html>")) {
+           throw new Error("Lỗi phân quyền! Hãy vào Google Apps Script cài đặt mục 'Who has access' thành 'Anyone'.");
+        } else {
+           throw new Error("Lỗi máy chủ Google: Phản hồi không xác định.");
+        }
+      }
+      
+      if (result.success) {
+        const syncedIds = cleanData.map(tx => tx.id);
+        setTransactions(prev => prev.map(t => syncedIds.includes(String(t.id)) ? { ...t, synced: true } : t));
+        if (!isAuto) showToastMsg(`Đã đẩy thành công ${cleanData.length} mục lên Cloud!`, "success");
+      } else {
+        if (!isAuto) showToastMsg("Lỗi từ Google Sheet: " + result.error, "error");
+      }
+    } catch (error) {
+      if (!isAuto) showToastMsg(error.message || "Lỗi mạng hoặc cấu hình Script.", "error");
+      console.error(error);
+    } finally {
+      isPushingRef.current = false;
+      setIsManualSyncing(false);
+      setBgSyncing(false);
+    }
+  };
+
+  // ----- CƠ CHẾ KÉO DỮ LIỆU CŨNG ĐƯỢC TÁI CẤU TRÚC -----
+  const syncFromSheet = async (isAuto = false) => {
+    if (!scriptUrl) return;
+    if (isPullingRef.current) return;
+
+    isPullingRef.current = true;
+    if (isAuto) setBgSyncing(true); else setIsManualSyncing(true);
+
+    try {
+      const url = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}action=pull&t=${Date.now()}`;
+      const response = await fetch(url);
+      
+      const textResponse = await response.text();
+      let data;
+      try {
+        data = JSON.parse(textResponse);
+      } catch (e) {
+         if (textResponse.includes("<!DOCTYPE html>")) {
+           throw new Error("Lỗi phân quyền! Cần set 'Who has access' thành 'Anyone' trong Apps Script.");
+         }
+        throw new Error("Dữ liệu tải về bị lỗi định dạng.");
+      }
+      
+      if (data && data.error) {
+         throw new Error(data.error);
+      }
+
+      if (Array.isArray(data)) {
+        const formattedData = data.map(item => {
+          const getVal = (possibleKeys) => {
+            for (let key of possibleKeys) {
+              if (item[key] !== undefined && item[key] !== null && String(item[key]).toLowerCase() !== 'null') return item[key];
+            }
+            return null;
+          };
+
+          const rawId = getVal(['ID', 'id', 'Id']);
+          return {
+            id: rawId ? rawId.toString().trim() : generateSafeId(),
+            date: getVal(['Date', 'date']) || new Date().toISOString(),
+            category: getVal(['Category', 'category']) || 'Khác',
+            itemName: getVal(['Item name', 'Item Name', 'itemName', 'item_name']) || 'Chưa đặt tên',
+            unit: getVal(['Unit', 'unit']) || '',
+            quantity: getVal(['Quantity', 'quantity']) ? Number(getVal(['Quantity', 'quantity'])) : null,
+            unitPrice: getVal(['Unit price', 'Unit Price', 'unitPrice', 'unit_price']) ? Number(getVal(['Unit price', 'Unit Price', 'unitPrice', 'unit_price'])) : null,
+            amount: Number(getVal(['Total amount', 'Total Amount', 'amount', 'total_amount'])) || 0,
+            type: getVal(['Type', 'type']) || 'expense',
+            synced: true 
+          };
+        });
+        
+        setTransactions(prev => {
+          const localUnsynced = prev.filter(t => !t.synced);
+          const mergedData = [...localUnsynced, ...formattedData];
+          
+          const uniqueMap = new Map();
+          mergedData.forEach(item => {
+            const strId = item.id.toString();
+            if (!uniqueMap.has(strId)) uniqueMap.set(strId, item);
+            else if (!uniqueMap.get(strId).synced && item.synced) uniqueMap.set(strId, item);
+          });
+          
+          return Array.from(uniqueMap.values()).sort((a,b) => parseDateSafe(b.date) - parseDateSafe(a.date));
+        });
+
+        if (!isAuto) showToastMsg(`Đã cập nhật toàn bộ sổ sách từ Cloud.`, "success");
+      }
+    } catch (error) {
+      if (!isAuto) showToastMsg(error.message, "error");
+    } finally {
+      isPullingRef.current = false;
+      setIsManualSyncing(false);
+      setBgSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    syncFromSheet(true);
+    const interval = setInterval(() => {
+      syncFromSheet(true);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [scriptUrl]);
+
+  useEffect(() => {
+    const unsynced = transactions.filter(t => !t.synced);
+    if (unsynced.length > 0 && !isManualSyncing && !bgSyncing && !isPushingRef.current) {
+      const timer = setTimeout(() => {
+        executeSyncToSheet(true);
+      }, 1500); 
+      return () => clearTimeout(timer);
+    }
+  }, [transactions, isManualSyncing, bgSyncing, scriptUrl]);
+
+  const handleAmountCalculations = (changedField, values, setter) => {
+    const { qty, price, amt } = values;
+    let nQty = parseFloat(qty) || 0;
+    let nPrice = parseFloat(price) || 0;
+    let nAmt = parseFloat(amt) || 0;
+
+    if (changedField === 'qty') {
+      if (nQty > 0 && nPrice > 0) setter({ ...values, amt: (nQty * nPrice).toString() });
+      else if (nQty > 0 && nAmt > 0) setter({ ...values, price: Math.round(nAmt / nQty).toString() });
+    } else if (changedField === 'price') {
+      if (nPrice > 0 && nQty > 0) setter({ ...values, amt: (nQty * nPrice).toString() });
+      else if (nPrice > 0 && nAmt > 0) setter({ ...values, qty: (nAmt / nPrice).toFixed(2).replace(/\.00$/, '') });
+    } else if (changedField === 'amt') {
+      if (nAmt > 0 && nQty > 0) setter({ ...values, price: Math.round(nAmt / nQty).toString() });
+      else if (nAmt > 0 && nPrice > 0) setter({ ...values, qty: (nAmt / nPrice).toFixed(2).replace(/\.00$/, '') });
+    }
+  };
+
+  const handleAISubmit = async (e) => {
+    e.preventDefault();
+    if (!smartText.trim()) return;
+    setIsProcessingAI(true);
+    setAiError('');
+
+    try {
+      const promptMsg = `Trích xuất các giao dịch mua/bán của tiệm bánh từ câu sau thành mảng JSON: "${smartText}". 
+Quy tắc BẮT BUỘC:
+1. Phân loại (category) CHỈ ĐƯỢC CHỌN 1 trong các giá trị chính xác sau: 
+   - Chi: 'Nguyên liệu', 'Bao bì', 'Vận chuyển', 'Điện/Nước', 'Thiết bị máy móc', 'Khác'
+   - Thu: 'Bán lẻ', 'Đặt bánh', 'Đồ uống', 'Khác'
+   (Mẹo: Tiền điện, nước -> 'Điện/Nước'. Ship, giao hàng -> 'Vận chuyển'. Hộp, ly -> 'Bao bì').
+2. Đơn vị (unit): 'Nguyên liệu' dùng 'kg', 'g', 'l', 'ml'. 'Điện/Nước' dùng 'tháng', 'số'.
+3. Để null nếu không rõ số lượng/đơn giá.`;
+
+      const payload = {
+        contents: [{ parts: [{ text: promptMsg }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                type: { type: "STRING" }, amount: { type: "NUMBER" }, category: { type: "STRING" },
+                note: { type: "STRING" }, itemName: { type: "STRING" }, brand: { type: "STRING" },
+                quantity: { type: "NUMBER" }, unit: { type: "STRING" }, unitPrice: { type: "NUMBER" }
+              },
+              required: ["type", "amount", "category"]
+            }
+          }
+        }
+      };
+
+      const apiKey = ""; 
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+      });
+      
+      if (!response.ok) throw new Error("Máy chủ AI quá tải.");
+      const result = await response.json();
+      
+      if (result.candidates && result.candidates[0].content) {
+        const parsedArray = JSON.parse(result.candidates[0].content.parts[0].text);
+        if (!parsedArray || parsedArray.length === 0) {
+           showToastMsg("AI không đọc được dữ liệu. Vui lòng nhập rõ hơn!", "error");
+           return;
+        }
+        
+        const newDrafts = parsedArray.map(parsed => {
+          let cleanCat = parsed.category || 'Khác';
+          if (cleanCat.toLowerCase().includes('điện') || cleanCat.toLowerCase().includes('nước')) cleanCat = 'Điện/Nước';
+          else if (cleanCat.toLowerCase().includes('ship') || cleanCat.toLowerCase().includes('vận chuyển') || cleanCat.toLowerCase().includes('giao')) cleanCat = 'Vận chuyển';
+          else if (cleanCat.toLowerCase().includes('bao') || cleanCat.toLowerCase().includes('hộp') || cleanCat.toLowerCase().includes('túi')) cleanCat = 'Bao bì';
+
+          if (parsed.type === 'expense' && !EXPENSE_CATEGORIES.some(c => c.name === cleanCat)) cleanCat = 'Khác';
+          else if (parsed.type === 'income' && !INCOME_CATEGORIES.some(c => c.name === cleanCat)) cleanCat = 'Khác';
+          
+          return { ...parsed, category: cleanCat, type: parsed.type === 'expense' || parsed.type === 'income' ? parsed.type : 'expense', id: generateSafeId(), date: new Date().toISOString(), synced: false };
+        });
+        
+        const hasMissingInfo = newDrafts.some(item => !item.quantity || !item.unitPrice);
+        setDraftTransactions(prev => [...newDrafts, ...prev]);
+        setSmartText('');
+        setTimeout(() => formEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+        if (hasMissingInfo) showToastMsg(`Đã tạo ${newDrafts.length} mục, nhưng có mục thiếu thông tin!`, "warning");
+        else showToastMsg(`Đã tạo ${newDrafts.length} mục từ AI.`, "success");
+      }
+    } catch (err) {
+      setAiError(err.message);
+    } finally {
+      setIsProcessingAI(false);
+    }
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => { setImagePreview(reader.result); processBillImage(reader.result.split(',')[1], file.type); };
+    reader.readAsDataURL(file);
+  };
+
+  const processBillImage = async (base64Data, mimeType) => {
+    setIsProcessingAI(true);
+    setAiError('');
+    try {
+      const promptMsg = `Bóc tách chi tiết từng dòng mặt hàng trong hóa đơn tiệm bánh này thành mảng JSON. Phân loại theo: 'Nguyên liệu', 'Bao bì', 'Vận chuyển', 'Điện/Nước', 'Thiết bị máy móc', 'Bán lẻ', 'Đặt bánh', 'Đồ uống', 'Khác'.`;
+
+      const payload = {
+        contents: [{
+          role: "user",
+          parts: [{ text: promptMsg }, { inlineData: { mimeType: mimeType, data: base64Data } }]
+        }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                type: { type: "STRING" }, amount: { type: "NUMBER" }, category: { type: "STRING" },
+                note: { type: "STRING" }, itemName: { type: "STRING" }, brand: { type: "STRING" },
+                quantity: { type: "NUMBER" }, unit: { type: "STRING" }, unitPrice: { type: "NUMBER" }
+              },
+              required: ["type", "amount", "category"]
+            }
+          }
+        }
+      };
+
+      const apiKey = "";
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+      });
+      
+      if (!response.ok) throw new Error("Sự cố kết nối máy chủ AI.");
+      const result = await response.json();
+      
+      if (result.candidates && result.candidates[0].content) {
+        const parsedArray = JSON.parse(result.candidates[0].content.parts[0].text);
+        if (!parsedArray || parsedArray.length === 0) {
+           showToastMsg("AI không tìm thấy dữ liệu hóa đơn!", "error");
+           setImagePreview(null); return;
+        }
+
+        const newDrafts = parsedArray.map(parsed => {
+          let cleanCat = parsed.category || 'Khác';
+          if (cleanCat.toLowerCase().includes('điện') || cleanCat.toLowerCase().includes('nước')) cleanCat = 'Điện/Nước';
+          else if (cleanCat.toLowerCase().includes('ship') || cleanCat.toLowerCase().includes('vận chuyển')) cleanCat = 'Vận chuyển';
+          else if (cleanCat.toLowerCase().includes('bao') || cleanCat.toLowerCase().includes('hộp') || cleanCat.toLowerCase().includes('túi')) cleanCat = 'Bao bì';
+
+          if (parsed.type === 'expense' && !EXPENSE_CATEGORIES.some(c => c.name === cleanCat)) cleanCat = 'Khác';
+          else if (parsed.type === 'income' && !INCOME_CATEGORIES.some(c => c.name === cleanCat)) cleanCat = 'Khác';
+          
+          return { ...parsed, category: cleanCat, type: parsed.type === 'expense' || parsed.type === 'income' ? parsed.type : 'expense', id: generateSafeId(), date: new Date().toISOString(), synced: false };
+        });
+        
+        const hasMissingInfo = newDrafts.some(item => !item.quantity || !item.unitPrice);
+        setDraftTransactions(prev => [...newDrafts, ...prev]);
+        setImagePreview(null);
+        setTimeout(() => formEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+
+        if (hasMissingInfo) showToastMsg(`Đã tách ${newDrafts.length} mục, hãy kiểm tra lại số lượng!`, "warning");
+        else showToastMsg(`Bóc tách hoàn tất ${newDrafts.length} mục.`, "success");
+      }
+    } catch (err) {
+      setAiError(err.message); setImagePreview(null);
+    } finally {
+      setIsProcessingAI(false);
+    }
+  };
+
+  const handleAddTransaction = (e) => {
+    e?.preventDefault();
+    const q = parseFloat(formQuantity) || 0;
+    const p = parseFloat(formUnitPrice) || 0;
+    const a = parseFloat(formAmount) || 0;
+    const calculatedAmount = q * p;
+    const finalAmount = a || calculatedAmount;
+
+    if (!finalAmount || isNaN(finalAmount) || finalAmount <= 0) {
+      showToastMsg("Số tiền hoặc số lượng/đơn giá không hợp lệ!", "error"); 
+      return;
+    }
+
+    const newTx = {
+      id: generateSafeId(),
+      type: formType, amount: finalAmount, category: formCategory, note: formNote,
+      itemName: formItemName, brand: formBrand,
+      quantity: q || null, unit: formUnit, unitPrice: p || null,
+      date: new Date().toISOString(), synced: false
+    };
+
+    if (q > 0 && p > 0 && Math.abs(calculatedAmount - finalAmount) > 10) {
+      setPendingTransaction(newTx);
+      setShowDiscrepancyModal(true);
+      return;
+    }
+
+    if (!formQuantity || !formUnitPrice) {
+      setPendingTransaction(newTx); 
+      setShowMissingInfoModal(true); 
+      return;
+    }
+
+    saveToDrafts(newTx);
+  };
+
+  const saveToDrafts = (tx) => {
+    setDraftTransactions([tx, ...draftTransactions]);
+    setFormAmount(''); setFormNote(''); setFormItemName(''); setFormBrand(''); setFormQuantity(''); setFormUnitPrice('');
+    setShowMissingInfoModal(false); setShowDiscrepancyModal(false); setPendingTransaction(null);
+    setTimeout(() => formEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+  };
+
+  const removeDraft = (idToRemove) => setDraftTransactions(draftTransactions.filter(tx => tx.id !== idToRemove));
+
+  const startEditDraft = (tx) => {
+    setEditingDraftId(tx.id);
+    setEditFormState({
+      itemName: tx.itemName || '', brand: tx.brand || '', category: tx.category || 'Nguyên liệu',
+      quantity: tx.quantity ? tx.quantity.toString() : '', unit: tx.unit || 'kg',
+      unitPrice: tx.unitPrice ? tx.unitPrice.toString() : '', amount: tx.amount ? tx.amount.toString() : '',
+      note: tx.note || ''
+    });
+  };
+
+  const saveEditDraft = (id) => {
+    const q = parseFloat(editFormState.quantity) || 0;
+    const p = parseFloat(editFormState.unitPrice) || 0;
+    const a = parseFloat(editFormState.amount) || 0;
+    const finalAmt = a || (q * p);
+
+    let finalType = 'expense';
+    if (INCOME_CATEGORIES.some(c => c.name === editFormState.category)) finalType = 'income';
+
+    setDraftTransactions(prev => prev.map(t => {
+      if (t.id === id) {
+        return { ...t, ...editFormState, type: finalType, quantity: q || null, unitPrice: p || null, amount: finalAmt };
+      }
+      return t;
+    }));
+
+    setEditingDraftId(null);
+    setEditFormState(null);
+    showToastMsg("Đã cập nhật dòng nháp.", "success");
+  };
+
+  const commitAllTransactions = () => {
+    if (draftTransactions.length === 0) return;
+    const newTxs = draftTransactions.map(t => ({...t, id: t.id.toString()}));
+    setTransactions(prev => [...newTxs, ...prev]);
+    showToastMsg(`Đã ghi vào sổ sách thành công!`, "success");
+    setDraftTransactions([]);
+    setActiveTab('history'); 
+
+    setTimeout(() => {
+      executeSyncToSheet(true, newTxs);
+    }, 500);
+  };
+
+  const getFilteredTransactions = () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    const dayOfWeek = now.getDay() || 7; 
+    const firstDayOfWeek = new Date(today); 
+    firstDayOfWeek.setDate(today.getDate() - dayOfWeek + 1); 
+    
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    return transactions.filter(tx => {
+      if (reportType !== 'all' && tx.type !== reportType) return false;
+      
+      const txDate = parseDateSafe(tx.date);
+      const txDay = new Date(txDate.getFullYear(), txDate.getMonth(), txDate.getDate());
+
+      if (reportPeriod === 'today') {
+         if (txDay.getTime() !== today.getTime()) return false;
+      }
+      else if (reportPeriod === 'this_week') {
+         if (txDay < firstDayOfWeek) return false; 
+      }
+      else if (reportPeriod === 'this_month') {
+         if (txDay < firstDayOfMonth) return false;
+      }
+      else if (reportPeriod === 'custom') {
+        if (customStartDate) { 
+           const start = new Date(customStartDate); start.setHours(0, 0, 0, 0); 
+           if (txDay < start) return false; 
+        }
+        if (customEndDate) { 
+           const end = new Date(customEndDate); end.setHours(0, 0, 0, 0); 
+           if (txDay > end) return false; 
+        }
+      }
+      return true;
+    });
+  };
+
+  const filteredTx = getFilteredTransactions();
+  const totalIncome = filteredTx.filter(t => t.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
+  const totalExpense = filteredTx.filter(t => t.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0);
+  const balance = totalIncome - totalExpense;
+
+  const renderDashboard = () => (
+    <div className="space-y-6 pb-28 animate-in fade-in duration-200">
+      <div className="bg-gradient-to-br from-orange-500 to-amber-600 rounded-2xl p-5 text-white shadow-lg shadow-orange-100">
+        <div className="flex items-center space-x-2 mb-3">
+          <Sparkles className="animate-pulse" size={20} />
+          <h2 className="font-bold text-base">Trợ lý AI Tiệm Bánh</h2>
+        </div>
+        
+        <form onSubmit={handleAISubmit} className="space-y-3">
+          <div className="relative">
+            <textarea value={smartText} onChange={(e) => setSmartText(e.target.value)} placeholder="VD: Mua 15kg đường hết 300k, 2 bơ lạt Anchor 500k..." className="w-full h-24 bg-white/10 placeholder-white/50 text-white rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-white/30 border border-white/10 resize-none" disabled={isProcessingAI} />
+            <button type="submit" disabled={isProcessingAI || !smartText.trim()} className="absolute right-3 bottom-3 bg-white text-orange-700 p-2 rounded-lg hover:bg-orange-50 active:scale-95 transition-all disabled:opacity-50 disabled:scale-100">
+              {isProcessingAI ? <Loader2 className="animate-spin" size={18} /> : <Wand2 size={18} />}
+            </button>
+          </div>
+
+          <div className="flex space-x-2">
+            <input type="file" accept="image/*" ref={fileInputRef} onChange={handleImageUpload} className="hidden" />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isProcessingAI} className="flex-1 bg-white/15 hover:bg-white/20 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 border border-white/10 transition-colors">
+              {isProcessingAI && imagePreview ? <Loader2 className="animate-spin" size={16} /> : <Camera size={16} />}
+              <span>Quét Hóa đơn / Bill</span>
+            </button>
+          </div>
+        </form>
+        {aiError && (
+          <div className="mt-3 bg-red-500/20 text-red-100 p-2.5 rounded-lg text-xs flex items-start space-x-1.5 border border-red-500/30">
+            <AlertCircle size={14} className="mt-0.5 flex-shrink-0" /><span>{aiError}</span>
+          </div>
+        )}
+      </div>
+
+      <form onSubmit={handleAddTransaction} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm space-y-5">
+        <div className="flex items-center justify-between border-b border-gray-50 pb-3">
+          <h3 className="font-bold text-gray-800 text-sm flex items-center space-x-1.5"><ListPlus size={18} className="text-orange-500" /><span>Nhập thủ công</span></h3>
+          <div className="flex bg-gray-100 p-1 rounded-lg">
+            <button type="button" onClick={() => setFormType('expense')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${formType === 'expense' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>Khoản Chi</button>
+            <button type="button" onClick={() => setFormType('income')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${formType === 'income' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>Khoản Thu</button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Phân loại</label>
+          <div className="grid grid-cols-2 gap-2">
+            {(formType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).map(cat => (
+              <button key={cat.id} type="button" onClick={() => setFormCategory(cat.name)} className={`flex items-center space-x-2 p-2.5 rounded-xl border text-left transition-all active:scale-[0.98] ${formCategory === cat.name ? 'border-orange-500 bg-orange-50/50 text-orange-700 font-semibold' : 'border-gray-100 bg-white text-gray-600 hover:bg-gray-50'}`}>
+                <div className={`${formCategory === cat.name ? 'text-orange-500' : 'text-gray-400'}`}>{cat.icon}</div><span className="text-xs truncate">{cat.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-gray-50/50 p-4 rounded-xl border border-gray-100 space-y-3.5">
+          <h4 className="text-xs font-bold text-gray-700 flex items-center space-x-1.5"><span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span><span>Chi tiết mặt hàng</span></h4>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tên món</label><input type="text" value={formItemName} onChange={(e) => setFormItemName(e.target.value)} placeholder="Ví dụ: Bột mì" className="w-full text-xs p-2.5 rounded-lg border border-gray-200 focus:border-orange-400 focus:outline-none bg-white text-gray-800" /></div>
+            <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Hãng</label><input type="text" list="brands" value={formBrand} onChange={(e) => setFormBrand(e.target.value)} placeholder="Ví dụ: Anchor" className="w-full text-xs p-2.5 rounded-lg border border-gray-200 focus:border-orange-400 focus:outline-none bg-white text-gray-800" />
+              <datalist id="brands"><option value="Anchor" /><option value="President" /><option value="Hoàng Kim" /></datalist>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Số lượng & Đơn vị</label>
+              <div className="flex bg-white rounded-lg border border-gray-200 focus-within:border-orange-400 overflow-hidden">
+                <input type="number" value={formQuantity} onChange={(e) => {
+                  const val = e.target.value; setFormQuantity(val);
+                  handleAmountCalculations('qty', { qty: val, price: formUnitPrice, amt: formAmount }, (vals) => { setFormAmount(vals.amt); setFormUnitPrice(vals.price); });
+                }} placeholder="SL" className="w-full text-xs p-2.5 focus:outline-none bg-transparent text-gray-800" />
+                <select value={formUnit} onChange={(e) => setFormUnit(e.target.value)} className="text-xs bg-gray-50 border-l border-gray-200 text-gray-600 focus:outline-none px-2 appearance-none">
+                  {formCategory === 'Nguyên liệu' ? (
+                    <><option value="kg">kg</option><option value="g">g</option><option value="l">l</option><option value="ml">ml</option></>
+                  ) : formCategory === 'Điện/Nước' ? (
+                    <><option value="tháng">tháng</option><option value="số">số</option></>
+                  ) : (
+                    <><option value="cái">cái</option><option value="chiếc">chiếc</option><option value="kg">kg</option><option value="g">g</option><option value="l">l</option><option value="ml">ml</option><option value="hộp">hộp</option><option value="bịch">bịch</option><option value="khác">khác</option></>
+                  )}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Đơn giá</label>
+              <input type="number" value={formUnitPrice} onChange={(e) => {
+                const val = e.target.value; setFormUnitPrice(val);
+                handleAmountCalculations('price', { qty: formQuantity, price: val, amt: formAmount }, (vals) => { setFormAmount(vals.amt); setFormQuantity(vals.qty); });
+              }} placeholder="Giá 1 đ.vị" className="w-full text-xs p-2.5 rounded-lg border border-gray-200 focus:border-orange-400 focus:outline-none bg-white text-gray-800" />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tổng tiền (VND)</label>
+            <input type="number" value={formAmount} onChange={(e) => {
+              const val = e.target.value; setFormAmount(val);
+              handleAmountCalculations('amt', { qty: formQuantity, price: formUnitPrice, amt: val }, (vals) => { setFormUnitPrice(vals.price); setFormQuantity(vals.qty); });
+            }} placeholder="Tổng" className="w-full text-xs p-2.5 rounded-lg border border-orange-200 bg-orange-50/30 text-orange-800 font-bold focus:border-orange-500 focus:outline-none" />
+          </div>
+          <div><label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Ghi chú</label><input type="text" value={formNote} onChange={(e) => setFormNote(e.target.value)} placeholder="Thêm..." className="w-full text-xs p-2.5 rounded-lg border border-gray-200 focus:border-orange-400 focus:outline-none bg-white text-gray-800" /></div>
+        </div>
+
+        <button type="submit" className="w-full bg-orange-50 text-orange-700 font-bold text-sm py-3 rounded-xl border border-orange-200 active:bg-orange-100 active:scale-[0.98] transition-all flex items-center justify-center space-x-2 shadow-sm">
+          <PlusCircle size={18} /><span>Thêm vào danh sách chờ</span>
+        </button>
+      </form>
+
+      {draftTransactions.length > 0 && (
+        <div className="mt-4 mb-24 animate-in fade-in slide-in-from-bottom-4">
+          <div className="flex items-center justify-between mb-3 px-1">
+            <h3 className="text-sm font-bold text-gray-800 flex items-center space-x-2"><CheckCircle2 size={18} className="text-green-500" /><span>Danh sách chờ ({draftTransactions.length})</span></h3>
+            <button type="button" onClick={() => setDraftTransactions([])} className="text-xs text-red-500 font-medium hover:underline">Hủy hết</button>
+          </div>
+          <div className="space-y-3 max-h-[400px] overflow-y-auto no-scrollbar">
+            {draftTransactions.map((tx) => (
+              <div key={tx.id} className={`bg-white p-3 rounded-xl border ${editingDraftId === tx.id ? 'border-orange-400 ring-1 ring-orange-400' : !tx.quantity || !tx.unitPrice ? 'border-amber-300' : 'border-gray-100'} shadow-sm flex flex-col space-y-2.5 transition-all`}>
+                {editingDraftId === tx.id ? (
+                  <div className="space-y-3 text-xs">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Tên món</label>
+                        <input type="text" value={editFormState.itemName} onChange={(e) => setEditFormState({ ...editFormState, itemName: e.target.value })} className="w-full p-2 border border-gray-200 rounded bg-gray-50 font-bold" />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Hãng</label>
+                        <input type="text" value={editFormState.brand} onChange={(e) => setEditFormState({ ...editFormState, brand: e.target.value })} className="w-full p-2 border border-gray-200 rounded bg-gray-50" />
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Phân loại</label>
+                        <select value={editFormState.category} onChange={(e) => {
+                          const catVal = e.target.value;
+                          let unitVal = editFormState.unit;
+                          if (catVal === 'Nguyên liệu') unitVal = 'kg';
+                          else if (catVal === 'Điện/Nước') unitVal = 'tháng';
+                          setEditFormState({ ...editFormState, category: catVal, unit: unitVal });
+                        }} className="w-full p-2 border border-gray-200 rounded bg-gray-50">
+                          <optgroup label="Khoản Chi (Expense)">{EXPENSE_CATEGORIES.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</optgroup>
+                          <optgroup label="Khoản Thu (Income)">{INCOME_CATEGORIES.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</optgroup>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Đơn vị</label>
+                        <select value={editFormState.unit} onChange={(e) => setEditFormState({ ...editFormState, unit: e.target.value })} className="w-full p-2 border border-gray-200 rounded bg-gray-50">
+                          {editFormState.category === 'Nguyên liệu' ? (
+                            <><option value="kg">kg</option><option value="g">g</option><option value="l">l</option><option value="ml">ml</option></>
+                          ) : editFormState.category === 'Điện/Nước' ? (
+                            <><option value="tháng">tháng</option><option value="số">số</option></>
+                          ) : (
+                            <><option value="cái">cái</option><option value="chiếc">chiếc</option><option value="kg">kg</option><option value="g">g</option><option value="l">l</option><option value="ml">ml</option><option value="hộp">hộp</option><option value="bịch">bịch</option><option value="khác">khác</option></>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <div>
+                        <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Số lượng</label>
+                        <input type="number" value={editFormState.quantity} onChange={(e) => {
+                          const val = e.target.value;
+                          setEditFormState(prev => { const updated = { ...prev, quantity: val }; handleAmountCalculations('qty', updated, (computed) => { updated.amount = computed.amt; updated.unitPrice = computed.price; }); return updated; });
+                        }} className="w-full p-2 border border-gray-200 rounded bg-gray-50 text-center" />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Đơn giá</label>
+                        <input type="number" value={editFormState.unitPrice} onChange={(e) => {
+                          const val = e.target.value;
+                          setEditFormState(prev => { const updated = { ...prev, unitPrice: val }; handleAmountCalculations('price', updated, (computed) => { updated.amount = computed.amt; updated.quantity = computed.qty; }); return updated; });
+                        }} className="w-full p-2 border border-gray-200 rounded bg-gray-50 text-center" />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Tổng tiền</label>
+                        <input type="number" value={editFormState.amount} onChange={(e) => {
+                          const val = e.target.value;
+                          setEditFormState(prev => { const updated = { ...prev, amount: val }; handleAmountCalculations('amt', updated, (computed) => { updated.unitPrice = computed.price; updated.quantity = computed.qty; }); return updated; });
+                        }} className="w-full p-2 border border-orange-200 rounded bg-orange-50/20 text-orange-800 font-bold text-center" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Ghi chú</label>
+                      <input type="text" value={editFormState.note} onChange={(e) => setEditFormState({ ...editFormState, note: e.target.value })} className="w-full p-2 border border-gray-200 rounded bg-gray-50" placeholder="Thông tin thêm..." />
+                    </div>
+
+                    <div className="flex space-x-2 pt-1.5">
+                      <button type="button" onClick={() => { setEditingDraftId(null); setEditFormState(null); }} className="flex-1 py-2 rounded bg-gray-100 font-bold text-gray-600 hover:bg-gray-200">Hủy</button>
+                      <button type="button" onClick={() => saveEditDraft(tx.id)} className="flex-1 py-2 rounded bg-green-600 font-bold text-white hover:bg-green-700 flex items-center justify-center space-x-1"><Check size={14} /><span>Lưu</span></button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3 overflow-hidden mr-2">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${tx.type === 'income' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-500'}`}>{tx.type === 'income' ? <TrendingUp size={16} /> : <TrendingDown size={16} />}</div>
+                      <div className="truncate">
+                        <div className="flex items-center space-x-1.5 flex-wrap">
+                          <span className={`font-bold text-xs truncate ${!tx.quantity || !tx.unitPrice ? 'text-amber-600' : 'text-gray-800'}`}>
+                            {tx.itemName !== 'Khác' && tx.itemName !== 'Chưa đặt tên' ? tx.itemName : tx.category} {tx.brand ? `(${tx.brand})` : ''}
+                          </span>
+                          <span className="text-[9px] text-gray-400 bg-gray-100 px-1 py-0.2 rounded font-medium">{tx.category}</span>
+                        </div>
+                        <p className="text-[10px] text-gray-500 flex items-center space-x-1 mt-0.5">
+                          {tx.quantity && tx.unitPrice ? (
+                            <span>{tx.quantity} {tx.unit || 'cái'} x {formatCurrency(tx.unitPrice)}</span>
+                          ) : (
+                            <span className="text-amber-500 flex items-center font-medium"><AlertCircle size={10} className="mr-1"/> Thiếu số lượng/đơn giá</span>
+                          )}
+                          {tx.note && <span className="text-gray-400 block truncate max-w-[120px]">- {tx.note}</span>}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2 flex-shrink-0">
+                      <span className={`font-black text-xs ${tx.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}</span>
+                      <div className="flex items-center space-x-0.5">
+                        <button onClick={() => startEditDraft(tx)} className="p-1.5 text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors"><Edit2 size={13} /></button>
+                        <button onClick={() => removeDraft(tx.id)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={13} /></button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div ref={formEndRef} className="h-4"></div>
+        </div>
+      )}
+
+      {draftTransactions.length > 0 && (
+        <div className="fixed bottom-[72px] left-0 right-0 p-4 bg-white/90 backdrop-blur-md border-t border-gray-100 shadow-[0_-10px_30px_rgba(0,0,0,0.04)] z-40 animate-in slide-in-from-bottom-8">
+          <div className="max-w-md mx-auto flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Tạm tính</span>
+              <span className="font-black text-orange-600 text-base">{formatCurrency(draftTransactions.reduce((acc, tx) => acc + (tx.type === 'income' ? tx.amount : -tx.amount), 0))}</span>
+            </div>
+            <button onClick={commitAllTransactions} className="bg-orange-600 text-white font-bold text-xs px-5 py-3 rounded-xl shadow-lg shadow-orange-100 hover:bg-orange-700 active:scale-[0.96] transition-all flex items-center space-x-1.5"><Wallet size={16} /><span>Lưu {draftTransactions.length} mục</span></button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderReports = () => {
+    return (
+      <div className="space-y-6 pb-24 animate-in fade-in duration-200">
+        
+        <div className="bg-white rounded-2xl p-4 border border-blue-200 shadow-sm shadow-blue-50 flex flex-col space-y-3">
+          <div className="flex items-center justify-between border-b border-gray-50 pb-2">
+            <div className="flex items-center space-x-2">
+              <RefreshCw className={`text-blue-600 ${bgSyncing ? 'animate-spin' : ''}`} size={18} />
+              <span className="font-bold text-sm text-gray-800">Đồng bộ Cloud</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              {scriptUrl ? (
+                <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center space-x-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                  <span>Đang Bật</span>
+                </span>
+              ) : (
+                <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-full">Tắt</span>
+              )}
+              <button onClick={() => setShowSettings(!showSettings)} className="p-1.5 text-gray-500 hover:text-blue-600 bg-gray-100 rounded-lg hover:bg-blue-50 transition-colors" title="Cấu hình Google Apps Script">
+                <Settings size={14} />
+              </button>
+            </div>
+          </div>
+
+          {showSettings && (
+            <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-100 space-y-2.5 animate-in slide-in-from-top-2 duration-200">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black uppercase text-gray-500 flex items-center space-x-1">
+                  <Link size={10} className="text-blue-500" />
+                  <span>Đường dẫn Google Apps Script</span>
+                </label>
+                {scriptUrl !== DEFAULT_SCRIPT_URL && (
+                  <button onClick={() => { setInputUrl(''); }} className="text-[9px] text-red-500 font-bold hover:underline">Xóa tùy biến / Reset</button>
+                )}
+              </div>
+              <div className="flex space-x-1.5">
+                <input type="text" value={inputUrl} onChange={(e) => setInputUrl(e.target.value)} placeholder="Dán link script.google.com..." className="flex-1 text-xs p-2.5 rounded-lg border border-gray-200 focus:outline-none focus:border-blue-500 bg-white" />
+                <button onClick={handleSaveUrl} className="bg-blue-600 text-white font-bold text-xs px-3.5 py-2.5 rounded-lg active:scale-95 transition-all flex items-center space-x-1">
+                  <Check size={14} /><span>Lưu</span>
+                </button>
+              </div>
+              <p className="text-[9.5px] text-gray-400 leading-normal">Nhập Link deploy mới của bạn để đổi Sheet lưu trữ. Để trống và lưu để khôi phục lại Link mặc định.</p>
+            </div>
+          )}
+
+          <button onClick={() => { executeSyncToSheet(false); syncFromSheet(false); }} disabled={isManualSyncing || bgSyncing} className="w-full bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors disabled:opacity-50">
+            {(isManualSyncing || bgSyncing) ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}<span>Đồng bộ thủ công ngay</span>
+          </button>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-gray-50 pb-2">
+            <span className="text-xs font-bold text-gray-500 uppercase flex items-center space-x-1"><Filter size={14} /> <span>Bộ lọc</span></span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {[{ id: 'all', label: 'Tất cả' }, { id: 'income', label: 'Khoản Thu' }, { id: 'expense', label: 'Khoản Chi' }].map(type => (
+              <button key={type.id} onClick={() => setReportType(type.id)} className={`py-2 text-xs font-semibold rounded-lg border transition-all ${reportType === type.id ? 'bg-orange-600 border-orange-600 text-white shadow-sm' : 'bg-white border-gray-150 text-gray-600 hover:bg-gray-50'}`}>{type.label}</button>
+            ))}
+          </div>
+          <div className="flex space-x-2 overflow-x-auto pb-1 no-scrollbar">
+             {[{ id: 'all', label: 'Tất cả' }, { id: 'today', label: 'Hôm nay' }, { id: 'this_week', label: 'Tuần này' }, { id: 'this_month', label: 'Tháng này' }, { id: 'custom', label: 'Tùy chọn' }].map(period => (
+               <button key={period.id} onClick={() => setReportPeriod(period.id)} className={`whitespace-nowrap px-4 py-2 text-xs font-medium rounded-full border transition-colors ${reportPeriod === period.id ? 'bg-orange-100 border-orange-300 text-orange-800' : 'bg-white border-gray-200 text-gray-600'}`}>{period.label}</button>
+             ))}
+          </div>
+
+          {reportPeriod === 'custom' && (
+            <div className="flex items-center space-x-2 mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100 animate-in slide-in-from-top-2">
+              <div className="flex-1">
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Từ ngày</label>
+                <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="w-full text-xs p-2 rounded-lg border border-gray-200 focus:outline-none focus:border-orange-400 bg-white" />
+              </div>
+              <div className="flex-1">
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Đến ngày</label>
+                <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="w-full text-xs p-2 rounded-lg border border-gray-200 focus:outline-none focus:border-orange-400 bg-white" />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Tổng quan dòng tiền</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-green-50/50 p-3 rounded-xl border border-green-100/50">
+              <span className="text-[10px] text-green-700 font-bold uppercase block mb-1">Tổng Thu</span><span className="text-base font-black text-green-600">{formatCurrency(totalIncome)}</span>
+            </div>
+            <div className="bg-red-50/50 p-3 rounded-xl border border-red-100/50">
+              <span className="text-[10px] text-red-700 font-bold uppercase block mb-1">Tổng Chi</span><span className="text-base font-black text-red-500">{formatCurrency(totalExpense)}</span>
+            </div>
+          </div>
+          <div className="mt-4 pt-3 border-t border-gray-50 flex justify-between items-center">
+            <span className="text-xs font-bold text-gray-500">Thặng dư / Lợi nhuận:</span><span className={`text-base font-black ${balance >= 0 ? 'text-green-600' : 'text-red-500'}`}>{balance >= 0 ? '+' : ''}{formatCurrency(balance)}</span>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1 flex items-center space-x-1.5"><Clock size={14} /> <span>Lịch sử sổ sách</span></h3>
+          {filteredTx.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-2xl border border-gray-100 shadow-sm text-gray-400">
+              <Calendar size={42} className="mx-auto mb-2 opacity-20 text-orange-500" /><p className="text-xs">Chưa có giao dịch.</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto no-scrollbar">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 text-[9px] uppercase text-gray-500 font-bold tracking-wider border-b border-gray-100">
+                      <th className="p-2">Mặt hàng</th><th className="p-2">Ngày</th><th className="p-2 text-right">SL</th><th className="p-2 text-right">Đơn giá</th><th className="p-2 text-right">Thành tiền</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {filteredTx.map(tx => (
+                      <tr key={tx.id} className="hover:bg-orange-50/20 transition-colors text-[11px]">
+                        <td className="p-2 break-words max-w-[90px]">
+                          <div className="font-bold text-gray-800 flex items-center space-x-1 flex-wrap">
+                            <span>{tx.itemName !== 'Khác' && tx.itemName !== 'Chưa đặt tên' ? tx.itemName : tx.category}</span>
+                            {tx.synced === false && <CloudSnow size={12} className="text-blue-500 animate-bounce flex-shrink-0" title="Đang chờ đẩy lên Cloud" />}
+                          </div>
+                          {tx.brand ? <div className="text-[9px] text-orange-700 bg-orange-100 inline-block px-1 py-0.5 rounded mt-0.5 font-bold uppercase">{tx.brand}</div> : tx.note && <div className="text-[9px] text-gray-400 line-clamp-2">{tx.note}</div>}
+                        </td>
+                        <td className="p-2 text-gray-600">
+                          <div>{formatDate(tx.date)}</div>
+                        </td>
+                        <td className="p-2 text-right font-semibold text-gray-700 break-words">{tx.quantity ? `${tx.quantity} ${tx.unit || ''}` : '-'}</td>
+                        <td className="p-2 text-right text-gray-600 break-words">{tx.unitPrice ? `${new Intl.NumberFormat('vi-VN').format(tx.unitPrice)}/${tx.unit || 'c'}` : '-'}</td>
+                        <td className={`p-2 text-right font-black break-words ${tx.type === 'income' ? 'text-green-600' : 'text-red-500'}`}>{tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 text-gray-800 font-sans antialiased relative">
+      
+      {toast && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 w-[90%] max-w-sm animate-in slide-in-from-top-4 fade-in duration-200">
+          <div className={`p-3.5 rounded-2xl shadow-xl flex items-center justify-between border ${toast.type === 'success' ? 'bg-green-600 border-green-700 text-white' : toast.type === 'warning' ? 'bg-amber-500 border-amber-600 text-white' : 'bg-red-600 border-red-700 text-white'}`}>
+            <span className="text-xs font-bold leading-tight">{toast.message}</span>
+            <button onClick={() => setToast(null)} className="p-1 bg-white/20 rounded-full hover:bg-white/30 transition-colors"><X size={14}/></button>
+          </div>
+        </div>
+      )}
+
+      {showMissingInfoModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl p-5 w-full max-w-xs shadow-2xl relative animate-in zoom-in-95 duration-150">
+            <div className="flex flex-col items-center text-center space-y-2 mb-5">
+              <div className="w-12 h-12 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center mb-1"><AlertCircle size={26} /></div>
+              <h3 className="text-sm font-bold text-gray-800">Chưa có số lượng / Đơn giá</h3>
+              <p className="text-xs text-gray-500 leading-relaxed">Nhập chi tiết giúp thống kê nguyên liệu chính xác hơn.</p>
+            </div>
+            <div className="flex space-x-2">
+              <button onClick={() => saveToDrafts(pendingTransaction)} className="flex-1 py-3 text-xs font-bold text-gray-600 bg-gray-100 rounded-xl active:scale-95 transition-all">Bỏ qua</button>
+              <button onClick={() => setShowMissingInfoModal(false)} className="flex-1 py-3 text-xs font-bold text-white bg-orange-500 rounded-xl active:scale-95 transition-all">Nhập tiếp</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDiscrepancyModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl p-5 w-full max-w-xs shadow-2xl relative animate-in zoom-in-95 duration-150 border-t-4 border-amber-500">
+            <div className="flex flex-col items-center text-center space-y-2 mb-5">
+              <div className="w-12 h-12 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center mb-1"><AlertCircle size={26} /></div>
+              <h3 className="text-sm font-bold text-amber-600">Sai lệch tổng tiền!</h3>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Số tiền bạn điền không khớp với (Số lượng x Đơn giá = {formatCurrency((parseFloat(formQuantity) || 0) * (parseFloat(formUnitPrice) || 0))}). Bạn có chắc chắn muốn giữ nguyên số tiền này không?
+              </p>
+            </div>
+            <div className="flex space-x-2">
+              <button onClick={() => setShowDiscrepancyModal(false)} className="flex-1 py-3 text-xs font-bold text-gray-600 bg-gray-100 rounded-xl active:scale-95 transition-all">Sửa lại</button>
+              <button onClick={() => saveToDrafts(pendingTransaction)} className="flex-1 py-3 text-xs font-bold text-white bg-amber-500 rounded-xl active:scale-95 transition-all">Đồng ý</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <header className="sticky top-0 bg-white/80 backdrop-blur-md border-b border-gray-100 z-30 py-3 px-4 shadow-sm">
+        <div className="max-w-md mx-auto flex justify-between items-center">
+          <div className="flex items-center space-x-2">
+            <div className="bg-orange-600 text-white p-2 rounded-xl shadow-md shadow-orange-100 relative">
+              <Cake size={20} />
+              {bgSyncing && <div className="absolute -top-1 -right-1 bg-blue-500 text-white rounded-full p-0.5"><RefreshCw size={8} className="animate-spin" /></div>}
+            </div>
+            <div>
+              <h1 className="font-black text-sm text-gray-900 tracking-tight">Kế toán Tiệm Bánh</h1>
+              <span className="text-[9px] text-orange-600 font-bold bg-orange-50 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Phiên bản Auto-Sync</span>
+            </div>
+          </div>
+          <div className="bg-amber-50 border border-amber-200/50 px-3 py-1.5 rounded-xl flex items-center space-x-1.5">
+            <Wallet size={14} className="text-amber-600" />
+            <span className="text-xs font-black text-amber-800">{formatCurrency(transactions.reduce((acc, curr) => acc + (curr.type === 'income' ? curr.amount : -curr.amount), 0))}</span>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-md mx-auto p-4">
+        {activeTab === 'add' ? renderDashboard() : renderReports()}
+      </main>
+
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-gray-100 py-2.5 px-4 z-40 shadow-lg pb-safe">
+        <div className="max-w-md mx-auto flex justify-around">
+          <button onClick={() => setActiveTab('add')} className={`flex flex-col items-center space-y-1 py-1 px-4 rounded-xl transition-all ${activeTab === 'add' ? 'text-orange-600 font-black scale-105' : 'text-gray-400 font-medium'}`}><PlusCircle size={20} /><span className="text-[10px]">Thêm mới</span></button>
+          <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center space-y-1 py-1 px-4 rounded-xl transition-all ${activeTab === 'history' ? 'text-orange-600 font-black scale-105' : 'text-gray-400 font-medium'}`}><BarChart3 size={20} /><span className="text-[10px]">Thống kê</span></button>
+        </div>
+      </nav>
+    </div>
+  );
+}
