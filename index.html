@@ -379,7 +379,7 @@
           // ===== AI qua Google Apps Script (action=ai) =====
           const callAI = async (body) => {
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 45000);
+            const timer = setTimeout(() => controller.abort(), 90000);
             try {
               const url = `${scriptUrl}${scriptUrl.includes('?') ? '&' : '?'}action=ai&t=${Date.now()}`;
               const res = await fetch(url, {
